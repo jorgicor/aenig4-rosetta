@@ -1,0 +1,988 @@
+(* vim: tabstop=2 shiftwidth=2 expandtab
+*)
+
+(*
+Copyright (c) 2017 Jorge Giner Cordero
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*)
+
+MODULE aenig4;
+
+IMPORT In, Out, Files, Args := stdArgs, Strings,
+  GetOpt, Text, Fmt, Tokenizer;
+
+CONST
+  PROGRAM = "aenig4";
+  letterA = 41H;
+  cnLetters = 26; cnMachineRotors = 5;
+  rotor1 = 0; rotor2 = 1; rotor3 = 2; rotor4 = 3;
+  rotor5 = 4; rotor6 = 5; rotor7 = 6; rotor8 = 7;
+  rotorBeta = 8; rotorGamma = 9; rotorB = 10; rotorC = 11;
+  cnRotors = 12; cLineLen = 75;
+  cBadRotor = 255; cFileNameLen = 160;
+
+TYPE
+  TProgramAction = PROCEDURE(): INTEGER;
+
+  TRotor = RECORD
+    name: ARRAY 8 OF CHAR;
+    alphabet: ARRAY (cnLetters+1) OF CHAR;
+    stepwhen: ARRAY 3 OF CHAR;
+    ring: BYTE;
+    wires: ARRAY cnLetters OF BYTE;
+    rwires: ARRAY cnLetters OF BYTE
+  END;
+
+  TPlugboard = RECORD
+    wires: ARRAY cnLetters OF BYTE
+  END;
+
+  TMachine = RECORD
+    rotors: ARRAY cnMachineRotors OF BYTE;
+    base: ARRAY cnMachineRotors OF BYTE;
+    pboard: TPlugboard
+  END;
+
+  TFileName = ARRAY cFileNameLen OF CHAR;
+
+VAR
+  rotors: ARRAY cnRotors OF TRotor;
+  machine: TMachine;
+  debugOn: BOOLEAN;
+  programAction: TProgramAction;
+  exitCode: INTEGER;
+  toksep: ARRAY 4 OF CHAR;
+  srcFileName, dstFileName: TFileName; 
+
+PROCEDURE ToUpper(c: CHAR): CHAR;
+BEGIN
+  IF (c >= "a") & (c <= "z") THEN
+    c := CHR(ORD(c) - 32)
+  END;
+  RETURN c
+END ToUpper;
+
+PROCEDURE StrEq(a, b: ARRAY OF CHAR): BOOLEAN;
+  VAR i: INTEGER;
+BEGIN
+  i := 0;
+  WHILE (a[i] # 0X) & (b[i] # 0X) & (ToUpper(a[i]) = ToUpper(b[i])) DO
+    INC(i)
+  END;
+  RETURN a[i] = b[i]
+END StrEq;
+
+(* Returns 255 if c not in [azAz], else c - 'a' or c - 'A' *)
+PROCEDURE ToNum(c: CHAR): INTEGER;
+  VAR r: INTEGER;
+BEGIN
+  IF (c >= "a") & (c <= "z") THEN
+    r := ORD(c) - ORD("a")
+  ELSIF (c >= "A") & (c <= "Z") THEN
+    r := ORD(c) - ORD("A")
+  ELSE
+    r := 255
+  END
+  RETURN r
+END ToNum;
+
+PROCEDURE PlugboardEncode(pb: TPlugboard; c: INTEGER): INTEGER;
+BEGIN
+  IF debugOn THEN
+    Out.Char(CHR(c + ORD("A")));
+    Out.Char(CHR(pb.wires[c] + ORD("A")));
+  END;
+  RETURN pb.wires[c]
+END PlugboardEncode;
+
+PROCEDURE Connect(pr: TRotor; base, c: INTEGER): INTEGER;
+BEGIN
+  c := (c + (cnLetters - pr.ring) + base) MOD cnLetters;
+  IF debugOn THEN
+    Out.Char(CHR(c + ORD("A")));
+    Out.Char(CHR(pr.wires[c] + ORD("A")));
+  END;
+  RETURN (pr.ring + (cnLetters - base) + pr.wires[c]) MOD cnLetters
+END Connect;
+
+PROCEDURE rConnect(pr: TRotor; base, c: INTEGER): INTEGER;
+BEGIN
+  c := (c + (cnLetters - pr.ring) + base) MOD cnLetters;
+  IF debugOn THEN
+    Out.Char(CHR(c + ORD("A")));
+    Out.Char(CHR(pr.rwires[c] + ORD("A")));
+  END;
+  RETURN (pr.ring + (cnLetters - base) + pr.rwires[c]) MOD cnLetters
+END rConnect;
+
+PROCEDURE IsRotorOnNotch(pr: TRotor; base: INTEGER): BOOLEAN;
+  VAR move: BOOLEAN; i: INTEGER;
+BEGIN
+  move := FALSE;
+  i := 0;
+  WHILE ~move & (pr.stepwhen[i] # 0X) DO
+    move := base = (ORD(pr.stepwhen[i]) - ORD("A")); 
+    INC(i);
+  END;
+  RETURN move
+END IsRotorOnNotch;
+
+PROCEDURE MoveRotors;
+  VAR i: INTEGER; move: ARRAY cnMachineRotors OF BOOLEAN;
+BEGIN
+  move[cnMachineRotors - 1] := TRUE;
+  i := cnMachineRotors - 2;
+  WHILE i >= 2 DO
+    move[i] := IsRotorOnNotch(rotors[machine.rotors[i + 1]],
+      machine.base[i + 1]);
+    DEC(i);
+  END;
+
+  FOR i := 3 TO cnMachineRotors - 1 DO
+    move[i] := move[i] OR
+      IsRotorOnNotch(rotors[machine.rotors[i]], machine.base[i]);
+  END;
+
+  FOR i := 2 TO cnMachineRotors - 1 DO
+    IF move[i] THEN
+      machine.base[i] := (machine.base[i] + 1) MOD cnLetters;
+    END;
+  END
+END MoveRotors;
+
+PROCEDURE EncodeChar(c: CHAR): CHAR;
+  VAR i, ci: INTEGER; lowcase: BOOLEAN;
+BEGIN
+  lowcase := (c >= "a") & (c <= "z");
+  IF lowcase OR ((c >= "A") & (c <= "Z")) THEN
+    MoveRotors;
+
+    IF lowcase THEN
+      ci := ORD(c) - ORD("a")
+    ELSE
+      ci := ORD(c) - ORD("A")
+    END;
+
+    IF debugOn THEN
+      Out.Char("(")
+    END;
+
+    ci := PlugboardEncode(machine.pboard, ci);
+    FOR i := cnMachineRotors - 1 TO 0 BY -1 DO
+      ci := Connect(rotors[machine.rotors[i]], machine.base[i], ci);
+    END;
+    FOR i := 1 TO cnMachineRotors - 1 DO
+      ci := rConnect(rotors[machine.rotors[i]], machine.base[i], ci);
+    END;
+    ci := PlugboardEncode(machine.pboard, ci);
+
+    IF debugOn THEN
+      Out.Char(")")
+    END;
+
+    IF lowcase THEN
+      c := CHR(ci + ORD("a"))
+    ELSE
+      c := CHR(ci + ORD("A"))
+    END;
+  END;
+
+  RETURN c
+END EncodeChar;
+
+PROCEDURE Encode(s: ARRAY OF CHAR);
+  VAR i: INTEGER; c: CHAR;
+BEGIN
+  i := 0;
+  WHILE s[i] # 0X DO
+    c := EncodeChar(s[i]);
+    Out.Char(c);
+    INC(i);
+  END;
+END Encode;
+
+PROCEDURE AreWiresOk(wires: ARRAY OF BYTE): BOOLEAN;
+  VAR i: INTEGER; mark: ARRAY cnLetters OF BYTE;
+BEGIN
+  FOR i := 0 TO cnLetters - 1 DO
+    mark[i] := 0
+  END;
+  
+  i := 0;
+  WHILE (i < cnLetters) & (mark[wires[i]] = 0) DO
+    mark[wires[i]] := 1;
+    INC(i);
+  END;
+
+  RETURN i = cnLetters
+END AreWiresOk;
+
+PROCEDURE InitRotor(VAR rotor: TRotor; name: ARRAY OF CHAR;
+    alphabet: ARRAY OF CHAR; stepwhen: ARRAY OF CHAR);
+  VAR i: INTEGER;
+BEGIN
+  rotor.name := name;
+  rotor.alphabet := alphabet;
+  rotor.stepwhen := stepwhen;
+  rotor.ring := 0;
+
+  FOR i := 0 TO cnLetters - 1 DO
+    rotor.wires[i] := ORD(rotor.alphabet[i]) - letterA;
+    rotor.rwires[rotor.wires[i]] := i;
+  END;
+END InitRotor;
+
+PROCEDURE CheckRotor(i: INTEGER);
+BEGIN 
+  IF ~AreWiresOk(rotors[i].wires) OR ~AreWiresOk(rotors[i].rwires) THEN
+    Out.String("fatal: bad rotor ");
+    Out.Int(i, 0); Out.Ln;
+    ASSERT(FALSE);
+  END;
+END CheckRotor;
+
+PROCEDURE IsPlugboardOk(pb: TPlugboard): BOOLEAN;
+  VAR i: INTEGER; r: BOOLEAN;
+BEGIN
+  r := AreWiresOk(pb.wires);
+  IF r THEN
+    i := 0;
+    WHILE (i < cnLetters) & (i = pb.wires[pb.wires[i]]) DO
+      INC(i);
+    END;
+    r := i = cnLetters;
+  END
+  RETURN r
+END IsPlugboardOk;
+
+PROCEDURE CheckPlugboard(pb: TPlugboard);
+BEGIN
+  IF ~IsPlugboardOk(pb) THEN
+    Out.String("fatal: bad plugboard"); Out.Ln;
+    ASSERT(FALSE);
+  END;
+END CheckPlugboard;
+
+PROCEDURE InitPlugboard(VAR pb: TPlugboard);
+  VAR i: INTEGER;
+BEGIN
+  FOR i := 0 TO cnLetters - 1 DO
+    pb.wires[i] := i;
+  END;  
+  CheckPlugboard(pb);
+END InitPlugboard;
+
+PROCEDURE InitRotors;
+  VAR r: INTEGER;
+BEGIN
+  InitRotor(rotors[0], "I", "EKMFLGDQVZNTOWYHXUSPAIBRCJ", "Q");
+  InitRotor(rotors[1], "II", "AJDKSIRUXBLHWTMCQGZNPYFVOE", "E");
+  InitRotor(rotors[2], "III", "BDFHJLCPRTXVZNYEIWGAKMUSQO", "V");
+  InitRotor(rotors[3], "IV", "ESOVPZJAYQUIRHXLNFTGKDCMWB", "J");
+  InitRotor(rotors[4], "V", "VZBRGITYUPSDNHLXAWMJQOFECK", "Z");
+  InitRotor(rotors[5], "VI", "JPGVOUMFYQBENHZRDKASXLICTW", "ZM");
+  InitRotor(rotors[6], "VII", "NZJHGRCXMYSWBOUFAIVLPEKQDT", "ZM");
+  InitRotor(rotors[7], "VIII", "FKQHTLXOCBJSPDZRAMEWNIUYGV", "ZM");
+  InitRotor(rotors[8], "Beta", "LEYJVCNIXWPBQMDRTAKZGFUHOS", "");
+  InitRotor(rotors[9], "Gamma", "FSOKANUERHMBTIYCWLQPZXVGJD", "");
+  InitRotor(rotors[10], "b", "ENKQAUYWJICOPBLMDXZVFTHRGS", "");
+  InitRotor(rotors[11], "c", "RDOBJNTKVEHMLFCWZAXGYIPSUQ", "");
+
+  FOR r := 0 TO cnRotors - 1 DO
+    CheckRotor(r);
+  END;
+END InitRotors;
+
+PROCEDURE InitMachine;
+  VAR i : INTEGER;
+BEGIN
+  machine.rotors[0] := rotorB;
+  machine.rotors[1] := rotorBeta;
+  machine.rotors[2] := rotor1;
+  machine.rotors[3] := rotor2;
+  machine.rotors[4] := rotor3;
+
+  FOR i := 0 TO cnMachineRotors - 1 DO
+    machine.base[i] := 0;
+  END;
+
+  InitPlugboard(machine.pboard);
+END InitMachine;
+
+(* Returns cBadRotor (255) if the rotor name is not found *)
+PROCEDURE GetRotorIdByName(name: ARRAY OF CHAR): INTEGER;
+  VAR i: INTEGER;
+BEGIN
+  i := 0;
+  WHILE (i < cnRotors) & ~StrEq(rotors[i].name, name) DO
+    INC(i);
+  END;
+  IF i = cnRotors THEN
+    i := cBadRotor;
+  END
+  RETURN i
+END GetRotorIdByName;
+
+PROCEDURE InRange(n, a, b: INTEGER): BOOLEAN;
+BEGIN
+  RETURN (n >= a) & (n <= b)
+END InRange;
+
+PROCEDURE IsRotorSettingOk(set: ARRAY OF BYTE): BOOLEAN;
+  VAR i, j: INTEGER; r: BOOLEAN;
+BEGIN
+  r := TRUE;
+  IF ~InRange(set[0], rotorB, rotorC) THEN
+    r := FALSE;
+  ELSIF ~InRange(set[1], rotorBeta, rotorGamma) THEN
+    r := FALSE;
+  ELSE
+    i := 2;
+    WHILE (i < cnMachineRotors) & InRange(set[i], rotor1, rotor8) DO
+      INC(i);
+    END;
+    IF i < cnMachineRotors THEN
+      r := FALSE;
+    ELSE
+	    (* This checks that we don't use the same rotor type twice.
+	     * It cannot be disabled as the code does not allow for
+	     * rotor duplicates right now...
+	     *)
+      i := 0;
+      WHILE r & (i < cnMachineRotors) DO
+        j := 0;
+        WHILE r & (j < cnMachineRotors) DO
+          IF (i # j) & (set[i] = set[j]) THEN
+            r := FALSE;
+          END;
+          INC(j);
+        END;
+        INC(i);
+      END;
+    END;
+   END;
+   RETURN r
+END IsRotorSettingOk;
+
+PROCEDURE ResetBases;
+  VAR i: INTEGER;
+BEGIN
+  FOR i := 0 TO cnMachineRotors - 1 DO
+    machine.base[i] := 0;
+  END;
+END ResetBases;
+
+PROCEDURE RunRotors(line: ARRAY OF CHAR; VAR p: INTEGER): BOOLEAN;
+  VAR set: ARRAY cnMachineRotors OF BYTE;
+    tok: ARRAY 6 OF CHAR;
+    i: INTEGER; r: BOOLEAN;
+BEGIN
+  r := TRUE;
+
+  FOR i := 0 TO cnMachineRotors - 1 DO
+    set[i] := cBadRotor;
+    Tokenizer.Next(line, p, toksep, tok);
+    IF tok[0] # 0X THEN
+      set[i] := GetRotorIdByName(tok);
+    END;
+  END;
+
+  IF ~IsRotorSettingOk(set) THEN
+    Out.String("Bad rotor setting"); Out.Ln;
+    r := FALSE;
+  ELSE
+    FOR i := 0 TO cnMachineRotors - 1 DO
+      machine.rotors[i] := set[i];
+      rotors[machine.rotors[i]].ring := 0;
+    END;
+    ResetBases;
+  END;
+
+  RETURN r
+END RunRotors;
+
+(* Extracts an integer from s starting at position p.
+   If there is no integer returns 0.
+ *)
+PROCEDURE ATOI(s: ARRAY OF CHAR; p: INTEGER): INTEGER;
+  VAR n, sign: INTEGER;
+BEGIN
+  n := 0;
+  WHILE s[p] = " " DO
+    INC(p);
+  END;
+
+  IF s[p] = "-" THEN
+    sign := -1;
+    INC(p);
+  ELSE
+    sign := 1;
+  END;
+
+  WHILE s[p] = "0" DO
+    INC(p);
+  END;
+
+  WHILE (s[p] >= "0") & (s[p] <= "9") DO
+    n := n * 10 + (ORD(s[p]) - ORD("0"));
+    INC(p);
+  END;
+
+  RETURN n * sign
+END ATOI;
+
+PROCEDURE RunRings(line: ARRAY OF CHAR; VAR p: INTEGER): BOOLEAN;
+  VAR i, rotori: INTEGER; bad: BOOLEAN;
+    tok: ARRAY cLineLen OF CHAR;
+    set: ARRAY cnMachineRotors OF BYTE;
+BEGIN
+  FOR i := 0 TO cnMachineRotors - 1 DO
+    set[i] := 0;
+  END;
+
+  i := 1;
+  bad := FALSE;
+  WHILE ~bad & (i < cnMachineRotors) DO
+    Tokenizer.Next(line, p, toksep, tok);
+    IF tok[0] # 0X THEN
+      set[i] := ATOI(tok, 0);
+    END;
+    IF (tok[0] = 0X) OR (set[i] <= 0) OR (set[i] > 26) THEN
+      Fmt.Print(Text.out, "Bad ring setting\n");
+      bad := TRUE;
+    END;
+    INC(i);
+  END;
+
+  IF ~bad THEN
+    FOR i := 1 TO cnMachineRotors - 1 DO
+      rotori := machine.rotors[i];
+      rotors[rotori].ring := set[i] - 1; 
+    END;
+    ResetBases;
+  END;
+
+  RETURN ~bad
+END RunRings;
+
+PROCEDURE RunBases(line: ARRAY OF CHAR; VAR p: INTEGER): BOOLEAN;
+  VAR bad: BOOLEAN; i, a: INTEGER;
+    tok: ARRAY cLineLen OF CHAR;
+    base: ARRAY cnMachineRotors OF BYTE;
+BEGIN
+  bad := FALSE;
+  Tokenizer.Next(line, p, toksep, tok);
+  IF Strings.Length(tok) # cnMachineRotors - 1 THEN
+		bad := TRUE;
+  END;
+
+  IF ~bad THEN
+    i := 0;
+    WHILE ~bad & (i < cnMachineRotors - 1) DO
+      a := ToNum(tok[i]);
+      IF (a >= 0) & (a < cnLetters) THEN
+        base[i + 1] := a;
+      ELSE
+        bad := TRUE;
+      END;
+      INC(i);
+    END;
+  END;
+
+  IF ~bad THEN
+    FOR i := 1 TO cnMachineRotors - 1 DO
+      machine.base[i] := base[i];
+    END;
+  END;
+
+  IF bad THEN
+    Fmt.Print(Text.out, "Bad formatted bases\n");
+  END;
+
+  RETURN ~bad
+END RunBases;
+
+PROCEDURE PlugboardUnplug(VAR pb: TPlugboard; id: INTEGER);
+  VAR i: INTEGER;
+BEGIN
+  i := pb.wires[id];
+  IF i # id THEN
+    pb.wires[i] := i;
+    pb.wires[id] := id;
+  END;
+END PlugboardUnplug;
+
+PROCEDURE RunPlug(line: ARRAY OF CHAR; VAR p: INTEGER): BOOLEAN;
+  VAR i, a, b: INTEGER; bad: BOOLEAN;
+    plugs: ARRAY cnLetters OF BYTE;
+    tok: ARRAY cLineLen OF CHAR;
+BEGIN
+  FOR i := 0 TO cnLetters - 1 DO
+    plugs[i] := cnLetters;
+  END;
+
+  bad := FALSE;
+  Tokenizer.Next(line, p, toksep, tok);
+  WHILE ~bad & (tok[0] # 0X) DO
+    IF Strings.Length(tok) # 2 THEN
+      bad := TRUE;
+    ELSE
+      a := ToNum(tok[0]);
+      b := ToNum(tok[1]);
+      IF (a >= 0) & (a < cnLetters) & (b >= 0) & (b < cnLetters) THEN
+        plugs[a] := b;
+        Tokenizer.Next(line, p, toksep, tok);
+      ELSE
+        bad := TRUE;
+      END;
+    END;
+  END;
+
+  IF ~bad THEN
+    FOR i := 0 TO cnLetters - 1 DO
+      IF plugs[i] # cnLetters THEN
+        PlugboardUnplug(machine.pboard, i);
+        PlugboardUnplug(machine.pboard, plugs[i]);
+        machine.pboard.wires[i] := plugs[i];
+        machine.pboard.wires[plugs[i]] := i;
+      END;
+    END;
+
+    CheckPlugboard(machine.pboard);
+  END;
+
+  IF bad THEN
+    Fmt.Print(Text.out, "Bad plugboard setting\n");
+  END;
+
+  RETURN ~bad
+END RunPlug;
+
+PROCEDURE RunUnplug(line: ARRAY OF CHAR; p: INTEGER): BOOLEAN;
+  VAR i, a: INTEGER; bad: BOOLEAN;
+    tok: ARRAY cLineLen OF CHAR;
+    unplugs: ARRAY cnLetters OF BOOLEAN;
+BEGIN
+  bad := FALSE;
+
+  FOR i := 0 TO cnLetters - 1 DO
+    unplugs[i] := FALSE;
+  END;
+
+  Tokenizer.Next(line, p, toksep, tok);
+  IF StrEq(tok, "all") THEN
+    FOR i := 0 TO cnLetters - 1 DO
+      unplugs[i] := TRUE;
+    END;
+  ELSE
+    i := 0;
+    WHILE ~bad & (tok[i] # 0X) DO
+      a := ToNum(tok[i]);
+      IF (a >= 0) & (a < cnLetters) THEN
+        unplugs[a] := TRUE;
+      ELSE
+        bad := TRUE;
+      END;
+      INC(i);
+    END;
+  END;
+
+  IF ~bad THEN
+    FOR i := 0 TO cnLetters -1 DO
+      IF unplugs[i] THEN
+        PlugboardUnplug(machine.pboard, i);
+      END;
+    END;
+
+    CheckPlugboard(machine.pboard);
+  END;
+
+  IF bad THEN
+    Fmt.Print(Text.out, "Bad plugboard setting\n");
+  END;
+
+  RETURN ~bad
+END RunUnplug;
+
+
+PROCEDURE RunIn(line: ARRAY OF CHAR; p: INTEGER);
+VAR tok: ARRAY cLineLen OF CHAR;
+BEGIN
+  Out.String(">>>>");
+  Tokenizer.Next(line, p, toksep, tok); 
+  WHILE tok[0] # 0X DO
+    Out.Char(" ");
+    Encode(tok);
+    Tokenizer.Next(line, p, toksep, tok);
+  END;
+  Out.Ln;
+END RunIn;
+
+PROCEDURE RunHelp;
+CONST
+  v0 = "> rotors (ex. rotors b Beta I II VIII)";
+  v1 = "        Set the machine rotors. Available rotors:";
+  v2 = "        b, c, Beta, Gamma, I, II, ... VIII.";
+	v3 = "> rings (ex. rings 1 1 7 26)";
+  v4 = "        Set the ring setting for the installed rotors.";
+	v5 = "> bases (ex. bases AAXR)";
+  v6 = "        Set the rotor positions for the installed rotors.";
+  v7 = "> plug (ex. plug AJ PS RT)";
+  v8 = "        Plug the given signals on the plugboard.";
+  v9 = "> unplug (ex. unplug all) (ex. unplug AFRT)";
+  v10 = "        Unplug all plugboard signals or the given signals.";
+  v11 = "> in (ex. in HELLO)";
+  v12 = "        Enter the characters for ciphering.";
+  v13 = "> config        Print the current machine settings.";
+  v14 = "> debug         Switch debug mode.";
+  v15 = "> help          Show this help.";
+  v16 = "> quit          Exit the program.";
+BEGIN
+  Out.String(v0); Out.Ln;
+  Out.String(v1); Out.Ln;
+  Out.String(v2); Out.Ln;
+  Out.String(v3); Out.Ln;
+  Out.String(v4); Out.Ln;
+  Out.String(v5); Out.Ln;
+  Out.String(v6); Out.Ln;
+  Out.String(v7); Out.Ln;
+  Out.String(v8); Out.Ln;
+  Out.String(v9); Out.Ln;
+  Out.String(v10); Out.Ln;
+  Out.String(v11); Out.Ln;
+  Out.String(v12); Out.Ln;
+  Out.String(v13); Out.Ln;
+  Out.String(v14); Out.Ln;
+  Out.String(v15); Out.Ln;
+  Out.String(v16); Out.Ln;
+END RunHelp;
+
+PROCEDURE RunDebug;
+BEGIN
+  debugOn := ~debugOn;
+  IF debugOn THEN
+    Fmt.Print(Text.out, "Debug on\n");
+  ELSE
+    Fmt.Print(Text.out, "Debug off\n");
+  END;
+END RunDebug;
+
+PROCEDURE RunConfig;
+  VAR i: INTEGER; n: BYTE;
+BEGIN
+  FOR i := 0 TO cnMachineRotors - 1 DO
+    Fmt.Print(Text.out, "%s ");
+    Fmt.String(rotors[machine.rotors[i]].name);
+  END;
+  FOR i := 1 TO cnMachineRotors - 1 DO
+    n := rotors[machine.rotors[i]].ring + 1;
+    IF n < 10 THEN
+      Out.Char("0");
+    END;
+    Out.Int(n, 0);
+    Out.Char(" ");
+  END;
+  FOR i := 1 TO cnMachineRotors - 1 DO
+    Out.Char(CHR(machine.base[i] + ORD("A")));
+  END;
+  FOR i := 0 TO cnLetters - 1 DO
+    IF (machine.pboard.wires[i] # i) & (i < machine.pboard.wires[i]) THEN
+      Fmt.Print(Text.out, " %c%c");
+      Fmt.Char(CHR(i + ORD("A")));
+      Fmt.Char(CHR(machine.pboard.wires[i] + ORD("A")));
+    END;
+  END;
+  Out.Ln;
+END RunConfig;
+
+PROCEDURE SetKey(key: ARRAY OF CHAR): BOOLEAN;
+  VAR p: INTEGER; r: BOOLEAN;
+BEGIN
+  p := 0;
+  r := RunRotors(key, p);
+  IF r THEN
+    r := RunRings(key, p);
+  END;
+  IF r THEN
+    r := RunBases(key, p);
+  END;
+  IF r THEN
+    r := RunPlug(key, p);
+  END;
+	RETURN r
+END SetKey;
+
+PROCEDURE RunLine(line: ARRAY OF CHAR): BOOLEAN;
+  VAR p: INTEGER; r, prconfig: BOOLEAN;
+    tok: ARRAY 16 OF CHAR;
+BEGIN
+  r := TRUE;
+  prconfig := FALSE;
+  p := 0;
+  Tokenizer.Next(line, p, toksep, tok);
+  IF tok[0] = 0X THEN
+    (* nothing *)
+  ELSIF tok = "quit" THEN
+    r := FALSE;
+  ELSIF tok = "in" THEN
+    RunIn(line, p);
+  ELSIF tok = "debug" THEN
+    RunDebug;
+  ELSIF tok = "rotors" THEN
+    prconfig := RunRotors(line, p);
+  ELSIF tok = "rings" THEN
+    prconfig := RunRings(line, p);
+  ELSIF tok = "bases" THEN
+    prconfig := RunBases(line, p);
+  ELSIF tok = "plug" THEN
+    prconfig := RunPlug(line, p);
+  ELSIF tok = "unplug" THEN
+    prconfig := RunUnplug(line, p);
+  ELSIF tok = "config" THEN
+    RunConfig;
+  ELSIF tok = "help" THEN
+    RunHelp;
+  ELSE
+    Out.String("unknown command"); Out.Ln;
+  END;
+  IF prconfig THEN
+    RunConfig;
+  END;
+  RETURN r
+END RunLine;
+
+PROCEDURE PrintVersion(): INTEGER;
+CONST
+  v0 = "aenig4 version 1.0 (Oberon-07)";
+  v1 = "Copyright (C) 2017 Jorge Giner Cordero.";
+  v2 = "This is free software: you are free to change and redistribute it.";
+  v3 = "There is NO WARRANTY, to the extent permitted by law.";
+BEGIN
+  Out.String(v0); Out.Ln;
+  Out.Ln;
+  Out.String(v1); Out.Ln;
+  Out.String(v2); Out.Ln;
+  Out.String(v3); Out.Ln;
+  RETURN 0
+END PrintVersion;
+
+(* Returns false if end of input *)
+PROCEDURE Gets(VAR s: ARRAY OF CHAR): BOOLEAN;
+  VAR i: INTEGER; r: BOOLEAN;
+BEGIN
+  i := 0;
+  REPEAT
+    In.Char(s[i]);
+    INC(i);
+  UNTIL (s[i - 1] = 0AX) OR (i >= LEN(s) - 1) OR ~In.Done;
+  IF ~In.Done THEN
+    DEC(i);
+  END;
+  s[i] := 0X;
+  RETURN In.Done OR (i # 0)
+END Gets;
+
+PROCEDURE Loop(): INTEGER;
+  VAR v, len: INTEGER; go: BOOLEAN; c: CHAR;
+    line: ARRAY cLineLen OF CHAR;
+BEGIN
+  v := PrintVersion();
+  Fmt.Print(Text.out, "\nType 'help' for the list of available commands.\n\n");
+  RunConfig;
+  Out.String("> ");
+  go := TRUE;
+  WHILE go & Gets(line) DO
+    len := Strings.Length(line);
+		IF (len > 0) & (line[len - 1] # 0AX) THEN
+      Fmt.Print(Text.out, "Line too long. Nothing done.\n");
+      REPEAT
+				In.Char(c);
+			UNTIL ~In.Done OR (c = 0AX);
+    ELSE
+			go := RunLine(line);
+    END;
+    IF go THEN
+      Out.String("> ");
+    END;
+  END;
+  RETURN 0
+END Loop;
+
+PROCEDURE Filter(): INTEGER;
+  VAR c: CHAR;
+BEGIN
+  REPEAT
+    In.Char(c);
+    IF In.Done THEN
+      c := EncodeChar(c);
+      Out.Char(c);
+    END;
+  UNTIL ~In.Done;
+  RETURN 0
+END Filter;
+
+PROCEDURE EncodeFile(): INTEGER;
+  VAR r: INTEGER; c: CHAR; b: BYTE;
+    srcFile, dstFile: Files.File;
+    srcRider, dstRider: Files.Rider;
+BEGIN
+  r := 0;
+
+  srcFile := Files.Old(srcFileName);
+  dstFile := Files.New(dstFileName); 
+  IF (srcFile # NIL) & (dstFile # NIL) THEN
+    Files.Register(dstFile);
+    Files.Set(srcRider, srcFile, 0);
+    Files.Set(dstRider, dstFile, 0);
+    Files.Read(srcRider, b);
+    WHILE ~srcRider.eof DO
+      c := EncodeChar(CHR(b));
+      Files.Write(dstRider, ORD(c));
+      Files.Read(srcRider, b);
+    END;
+  ELSE
+    r := -1;
+  END;
+
+  IF srcFile # NIL THEN
+    Files.Close(srcFile);
+  END;
+
+  IF dstFile # NIL THEN
+    Files.Close(dstFile);
+  END;
+
+  RETURN r
+END EncodeFile;
+
+PROCEDURE PrintHelp(): INTEGER;
+CONST
+  v0 = "Usage: aenig4 [OPTION]... [ SOURCE DEST ]";
+  v1 = "If SOURCE and DEST are specified, encode the SOURCE file into the DEST";
+  v2 = "file. If not, the program will run in interactive mode, unless the option";
+  v3 = "--filter is given, in which case stdin will be encoded to stdout.";
+  v4 = "Options:";
+  v5 = "  -f, --filter        Encode stdin to stdout.";
+  v6 = "  -h, --help          Display this help and exit.";
+  v7 = "  -k, --key=KEY       Set the initial machine configuration. For example:";
+  v8 = "                      -k \'c Gamma V IV I 1 26 2 3 RTJZ BT RJ\'.";
+  v9 = "  -v, --version       Output version information and exit.";
+  v10 = "Report bugs to: <jorge.giner@hotmail.com>.";
+  v11 = "Home page: <http://jorgicor.sdfeu.org/aenig4>.";
+BEGIN
+  Out.String(v0); Out.Ln;
+  Out.Ln;
+  Out.String(v1); Out.Ln;
+  Out.String(v2); Out.Ln;
+  Out.String(v3); Out.Ln;
+  Out.Ln;
+  Out.String(v4); Out.Ln;
+  Out.String(v5); Out.Ln;
+  Out.String(v6); Out.Ln;
+  Out.String(v7); Out.Ln;
+  Fmt.Print(Text.out, v8); Out.Ln;
+  Out.String(v9); Out.Ln;
+  Out.Ln;
+  Out.String(v10); Out.Ln;
+  Out.String(v11); Out.Ln;
+  RETURN 0
+END PrintHelp;
+
+PROCEDURE ExitFailure(): INTEGER;
+BEGIN
+  RETURN -1
+END ExitFailure;
+
+PROCEDURE HandleOptions(): TProgramAction;
+  VAR ops: ARRAY 4 OF GetOpt.TOption;
+    c: CHAR; res: INTEGER;
+    paction: TProgramAction;
+BEGIN
+  paction := NIL;
+  GetOpt.Fill(ops[0], "h", "help", FALSE);
+  GetOpt.Fill(ops[1], "v", "version", FALSE);
+  GetOpt.Fill(ops[2], "k", "key", TRUE);
+  GetOpt.Fill(ops[3], "f", "filter", FALSE);
+  REPEAT c := GetOpt.Next(ops);
+    CASE c OF
+      "v": paction := PrintVersion;
+    | "h": paction := PrintHelp;
+    | "f": paction := Filter;
+    | "k": IF ~SetKey(GetOpt.optArg) THEN paction := ExitFailure END;
+    | "?": Fmt.Print(Text.out, "%s: unrecognized option %s\n");
+           Fmt.String(PROGRAM); Fmt.String(GetOpt.optArg);
+           paction := ExitFailure;
+    | ":": Fmt.Print(Text.out, "%s: %s needs an argument\n");
+           Fmt.String(PROGRAM); Fmt.String(GetOpt.optArg);
+           paction := ExitFailure;
+    | ";": Fmt.Print(Text.out,
+        "%s: %s does not allow for arguments\n");
+           Fmt.String(PROGRAM); Fmt.String(GetOpt.optArg);
+           paction := ExitFailure;
+    | 0X:
+    END
+  UNTIL (c = 0X) OR (paction # NIL);
+  
+  IF (paction = NIL) OR (paction = Filter) THEN
+    IF Args.count > GetOpt.optInd THEN
+      Args.Get(GetOpt.optInd, srcFileName, res);
+    END;  
+
+    IF Args.count > GetOpt.optInd + 1 THEN
+      Args.Get(GetOpt.optInd + 1, dstFileName, res);
+    END;
+  END;
+
+  IF (srcFileName[0] # 0X) & (dstFileName[0] = 0X) THEN
+    Fmt.Print(Text.err, "%s: unspecified DEST file\n");
+    Fmt.String(PROGRAM);
+    paction := ExitFailure;
+  ELSIF dstFileName[0] # 0X THEN
+    IF paction = Filter THEN
+      Fmt.Print(Text.err, "%s: warning: --filter option ignored\n");
+      Fmt.String(PROGRAM);
+    END;
+    paction := EncodeFile;
+  END;
+
+  IF paction = NIL THEN
+    paction := Loop
+  END;
+
+  RETURN paction
+END HandleOptions;
+
+BEGIN
+  toksep[0] := " ";
+  toksep[1] := 0AX;
+  toksep[2] := 0DX;
+  toksep[3] := 0X;
+
+  srcFileName[0] := 0X;
+  dstFileName[0] := 0X;
+
+  debugOn := FALSE;
+
+  InitRotors;
+  InitMachine;
+  programAction := HandleOptions();
+  exitCode := programAction();
+END aenig4.

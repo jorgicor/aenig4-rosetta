@@ -1,0 +1,203 @@
+(* vim: tabstop=2 shiftwidth=2 expandtab
+ *)
+
+(*
+Copyright (c) 2017 Jorge Giner Cordero
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*)
+
+MODULE Text;
+
+IMPORT Out, stdErr, Files, stdConvert;
+
+TYPE
+
+  Writer* = POINTER TO WriterDesc;
+
+  WriterMethods* = POINTER TO WriterMethodsDesc;
+
+  WriterDesc* = RECORD m*: WriterMethods END;
+
+  WriterMethodsDesc* = RECORD
+    String*: PROCEDURE(w: Writer; s: ARRAY OF CHAR);
+    Char*: PROCEDURE(w: Writer; c: CHAR);
+    Int*: PROCEDURE(w: Writer; i, n: INTEGER);
+    Real*: PROCEDURE(w: Writer; r: REAL; n: INTEGER);
+    Ln*: PROCEDURE(w: Writer)
+  END;
+
+  FileWriter* = POINTER TO FileWriterDesc;
+  FileWriterDesc* = RECORD (WriterDesc)
+    rider*: Files.Rider
+  END;
+
+VAR
+  out*, err*: Writer;
+  fileMethods, outMethods, errMethods: WriterMethods;
+
+PROCEDURE String*(w: Writer; s: ARRAY OF CHAR);
+BEGIN
+  w.m.String(w, s);
+END String;
+
+PROCEDURE Char*(w: Writer; c: CHAR);
+BEGIN
+  w.m.Char(w, c);
+END Char;
+
+PROCEDURE Int*(w: Writer; i, n: INTEGER);
+BEGIN
+  w.m.Int(w, i, n);
+END Int;
+
+PROCEDURE Real*(w: Writer; r: REAL; n: INTEGER);
+BEGIN
+  w.m.Real(w, r, n);
+END Real;
+
+PROCEDURE Ln*(w: Writer);
+BEGIN
+  w.m.Ln(w);
+END Ln;
+
+PROCEDURE FileString(w: Writer; s: ARRAY OF CHAR);
+  VAR i: INTEGER;
+BEGIN
+  i := 0;
+  WHILE s[i] # 0X DO
+    Files.Write(w(FileWriter).rider, ORD(s[i]));
+    INC(i);
+  END;
+END FileString;
+
+PROCEDURE FileChar(w: Writer; c: CHAR);
+BEGIN
+  Files.Write(w(FileWriter).rider, ORD(c));
+END FileChar;
+
+PROCEDURE FileInt(w: Writer; i, n: INTEGER);
+  VAR ibuf: ARRAY 21 OF CHAR;
+    done: BOOLEAN;
+BEGIN
+  stdConvert.IntToString(i, ibuf, done);
+  FileString(w, ibuf);
+END FileInt;
+
+PROCEDURE FileReal(w: Writer; r: REAL; n: INTEGER);
+  VAR rbuf: ARRAY 64 OF CHAR;
+    done: BOOLEAN;
+BEGIN
+  stdConvert.RealToString(r, rbuf, done);
+  FileString(w, rbuf);
+END FileReal;
+
+PROCEDURE FileLn(w: Writer);
+BEGIN
+  Files.Write(w(FileWriter).rider, ORD(0AX));
+END FileLn;
+
+PROCEDURE NewFileWriter*(r: Files.Rider): FileWriter;
+  VAR fw: FileWriter;
+BEGIN
+  NEW(fw);
+  fw.rider := r;
+  fw.m := fileMethods;
+  RETURN fw
+END NewFileWriter;
+
+PROCEDURE OutString(w: Writer; s: ARRAY OF CHAR);
+BEGIN
+  Out.String(s);
+END OutString;
+
+PROCEDURE OutChar(w: Writer; c: CHAR);
+BEGIN
+  Out.Char(c);
+END OutChar;
+
+PROCEDURE OutInt(w: Writer; i, n: INTEGER);
+BEGIN
+  Out.Int(i, n);
+END OutInt;
+
+PROCEDURE OutReal(w: Writer; r: REAL; n: INTEGER);
+BEGIN
+  Out.Real(r, n);
+END OutReal;
+
+PROCEDURE OutLn(w: Writer);
+BEGIN
+  Out.Ln;
+END OutLn;
+
+PROCEDURE ErrString(w:Writer; s: ARRAY OF CHAR);
+BEGIN
+  stdErr.String(s);
+END ErrString;
+
+PROCEDURE ErrChar(w:Writer; c: CHAR);
+BEGIN
+  stdErr.Char(c);
+END ErrChar;
+
+PROCEDURE ErrInt(w:Writer; i, n: INTEGER);
+BEGIN
+  stdErr.Int(i, n);
+END ErrInt;
+
+PROCEDURE ErrReal(w:Writer; r: REAL; n: INTEGER);
+BEGIN
+  stdErr.Real(r, n);
+END ErrReal;
+
+PROCEDURE ErrLn(w:Writer);
+BEGIN
+  stdErr.Ln;
+END ErrLn;
+
+BEGIN
+  NEW(outMethods);
+  outMethods.String := OutString;
+  outMethods.Char := OutChar;
+  outMethods.Int := OutInt;
+  outMethods.Real := OutReal;
+  outMethods.Ln := OutLn;
+
+  NEW(errMethods);
+  errMethods.String := ErrString;
+  errMethods.Char := ErrChar;
+  errMethods.Int := ErrInt;
+  errMethods.Real := ErrReal;
+  errMethods.Ln := ErrLn;
+
+  NEW(fileMethods);
+  fileMethods.String := FileString;
+  fileMethods.Char := FileChar;
+  fileMethods.Int := FileInt;
+  fileMethods.Real := FileReal;
+  fileMethods.Ln := FileLn;
+
+  NEW(out);
+  out.m := outMethods;
+
+  NEW(err);
+  err.m := errMethods;
+END Text.

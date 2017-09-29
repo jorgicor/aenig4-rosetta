@@ -1,0 +1,175 @@
+(* vim: tabstop=2 shiftwidth=2 expandtab
+ *)
+
+(*
+Copyright (c) 2017 Jorge Giner Cordero
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*)
+
+MODULE Fmt;
+
+(*
+Example:
+  Fmt.Print(Text.out, "%s, give me \'%d\' apples\n");
+  Fmt.String("George"); Fmt.Int(3); 
+
+will print:
+  George, give me "3" apples.<NEWLINE>
+
+Escape sequences:
+  \n New line.
+  \r Carriage return.
+  \t Tab.
+  \' Double quote (").
+
+Format specifiers:
+  %s String.
+  %c Char.
+  %d or %i Integer.
+  %f or %r Real.
+*)
+
+IMPORT Text;
+
+CONST
+  cMaxLen = 256;
+  cFormatChars = "scdifr";
+  cSpecialChars = "nrt'";
+
+VAR
+  template: ARRAY cMaxLen OF CHAR;
+  out: ARRAY cMaxLen OF CHAR;
+  index: INTEGER;
+  writer: Text.Writer; 
+
+PROCEDURE StrChr(s: ARRAY OF CHAR; c: CHAR): INTEGER;
+  VAR i: INTEGER; ch: CHAR;
+BEGIN
+  i := 0;
+  REPEAT ch := s[i]; INC(i) UNTIL (ch = 0X) OR (ch = c);
+  IF ch = c THEN DEC(i) ELSE i := -1 END;
+  RETURN i
+END StrChr;
+
+PROCEDURE IsFormatChar(c: CHAR): BOOLEAN;
+BEGIN
+  RETURN StrChr(cFormatChars, c) >= 0
+END IsFormatChar;
+
+PROCEDURE IsSpecialChar(c: CHAR): BOOLEAN;
+BEGIN
+  RETURN StrChr(cSpecialChars, c) >= 0
+END IsSpecialChar;
+
+PROCEDURE EncodeSpecialChar(c: CHAR): CHAR;
+BEGIN
+  CASE c OF
+    "t": c := 9X
+  | "n": c := 0AX
+  | "r": c := 0DX
+  | "'": c := 22X
+  END
+  RETURN c
+END EncodeSpecialChar;
+
+PROCEDURE PrintUntil;
+  VAR i: INTEGER; process: BOOLEAN;
+BEGIN
+  i := 0;
+  process := TRUE;
+  WHILE process DO
+    IF (template[index] = "%") & IsFormatChar(template[index + 1]) THEN
+      process := FALSE
+    ELSIF (template[index] = "\") & IsSpecialChar(template[index + 1]) THEN
+      IF template[index + 1] = "n" THEN
+        IF i > 0 THEN
+          out[i] := 0X;
+          Text.String(writer, out)
+        END;
+        Text.Ln(writer);
+        i := 0;
+        INC(index, 2)
+      ELSE
+        out[i] := EncodeSpecialChar(template[index + 1]);
+        INC(i); INC(index, 2)
+      END
+    ELSE
+      out[i] := template[index];
+      process := out[i] # 0X;
+      IF process THEN INC(i); INC(index) END;
+    END;
+  END;
+  IF i > 0 THEN out[i] := 0X; Text.String(writer, out) END;
+END PrintUntil;
+
+PROCEDURE Print*(w: Text.Writer; s: ARRAY OF CHAR);
+BEGIN
+  writer := w;
+  template := s;
+  template[LEN(template) - 1] := 0X;
+  index := 0;
+  PrintUntil;
+END Print;
+
+PROCEDURE String*(s: ARRAY OF CHAR);
+BEGIN
+  IF (template[index] # 0X) & (template[index + 1] = "s") THEN
+    Text.String(writer, s);
+    index := index + 2;
+    PrintUntil;
+  END;
+END String;
+
+PROCEDURE Char*(c: CHAR);
+BEGIN
+  IF (template[index] # 0X) & (template[index + 1] = "c") THEN
+    Text.Char(writer, c);
+    index := index + 2;
+    PrintUntil;
+  END;
+END Char;
+
+PROCEDURE Int*(vi: INTEGER);
+BEGIN
+  IF (template[index] # 0X) & (template[index + 1] = "d") OR
+     (template[index + 1] = "i")
+  THEN
+    Text.Int(writer, vi, 0);
+    index := index + 2;
+    PrintUntil;
+  END;
+END Int;
+
+PROCEDURE Real*(r: REAL);
+BEGIN
+  IF (template[index] # 0X) & (template[index + 1] = "f") OR
+     (template[index + 1] = "r")
+  THEN
+    Text.Real(writer, r, 0);
+    index := index + 2;
+    PrintUntil;
+  END;
+END Real;
+
+BEGIN
+  template := "";
+  index := 0;
+END Fmt.

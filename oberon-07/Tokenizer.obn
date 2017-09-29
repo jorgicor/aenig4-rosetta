@@ -1,0 +1,57 @@
+(* vim: tabstop=2 shiftwidth=2 expandtab
+ *)
+
+(*
+Copyright (c) 2017 Jorge Giner Cordero
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*)
+
+MODULE Tokenizer;
+
+PROCEDURE IsToken(c: CHAR; tokens: ARRAY OF CHAR): BOOLEAN;
+  VAR i: INTEGER;
+BEGIN
+  i := 0;
+  WHILE (tokens[i] # 0X) & (c # tokens[i]) DO
+    INC(i);
+  END;
+  RETURN (tokens[i] # 0X) & (c = tokens[i])
+END IsToken;
+
+PROCEDURE Next*(s: ARRAY OF CHAR; VAR p: INTEGER; tokens: ARRAY OF CHAR;
+    VAR dst: ARRAY OF CHAR);
+  VAR i: INTEGER;
+BEGIN
+  WHILE IsToken(s[p], tokens) DO
+    INC(p)
+  END;
+
+  i := 0;
+  WHILE (s[p] # 0X) & (i < LEN(dst) - 1) & ~IsToken(s[p], tokens) DO
+    dst[i] := s[p];
+    INC(i); INC(p);
+  END;
+
+  dst[i] := 0X;
+END Next;
+
+BEGIN
+END Tokenizer.

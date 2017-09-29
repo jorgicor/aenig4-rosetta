@@ -1,0 +1,225 @@
+(* vim: tabstop=2 shiftwidth=2 expandtab
+ *)
+
+(*
+Copyright (c) 2017 Jorge Giner Cordero
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*)
+
+MODULE GetOpt;
+
+IMPORT
+  Args := stdArgs, Strings;
+
+CONST
+  cMaxArgLen* = 64;
+  cMaxOptLen = 32;
+
+TYPE
+  TOption* = RECORD
+    name: ARRAY cMaxOptLen OF CHAR;
+    hasArg: BOOLEAN;
+    val: CHAR
+  END;
+
+  TArg = ARRAY cMaxArgLen OF CHAR;
+
+VAR
+  optArg*, arg: TArg;
+  res: INTEGER;
+  state: INTEGER;
+  subind, optInd*: INTEGER;
+  str: ARRAY 3 OF CHAR;
+
+PROCEDURE Fill*(VAR op: TOption; val: CHAR; name: ARRAY OF CHAR;
+    hasArg: BOOLEAN);
+BEGIN
+  op.val := val;
+  op.name := name;
+  op.hasArg := hasArg;
+END Fill;
+
+PROCEDURE FindShortOpt(val: CHAR; ops: ARRAY OF TOption): INTEGER;
+  VAR i: INTEGER;
+BEGIN
+  i := 0;
+  WHILE (i < LEN(ops)) & (ops[i].name[0] # 0X) & (ops[i].val # val) DO
+    INC(i);
+  END;
+  IF (i = LEN(ops)) OR (ops[i].val # val) THEN i := -1 END;
+  RETURN i
+END FindShortOpt;
+
+PROCEDURE FindLongOpt(arg: ARRAY OF CHAR; ops: ARRAY OF TOption): INTEGER;
+  VAR i, p, q: INTEGER;
+    found: BOOLEAN;
+BEGIN
+  i := 0;
+  found := FALSE;
+  WHILE ~found & (i < LEN(ops)) & (ops[i].name[0] # 0X) DO
+    p := 0;
+    q := 2;
+    WHILE (ops[i].name[p] # 0X) & (ops[i].name[p] = arg[q]) DO
+      INC(p); INC(q);
+    END;
+    IF (ops[i].name[p] = 0X) & ((arg[q] = 0X) OR (arg[q] = "="))
+    THEN found := TRUE;
+    ELSE INC(i) END;
+  END;
+  IF ~found THEN i := -1 END
+  RETURN i
+END FindLongOpt;
+
+PROCEDURE GetShortOpt(ops: ARRAY OF TOption): CHAR;
+  VAR c: CHAR; i, res: INTEGER;
+BEGIN
+  i := FindShortOpt(arg[subind], ops);
+  IF i < 0 THEN
+    (* unrecognized option *)
+    str[1] := arg[subind];
+    Strings.Extract(str, 0, LEN(str), optArg);
+    INC(subind);
+    c := "?";
+  ELSIF ~ops[i].hasArg THEN
+    (* it's ok *)
+    INC(subind);
+    c := ops[i].val;
+  ELSE
+    (* needs argument *)
+    IF arg[subind + 1] # 0X THEN
+      (* the argument is the suffix *)
+      Strings.Extract(arg, subind + 1, LEN(arg), optArg);
+      subind := 0;
+      INC(optInd);
+      c := ops[i].val;
+    ELSE
+      (* the argument is the next token *)
+      INC(optInd);
+      subind := 0;
+      IF optInd < Args.count THEN
+        Args.Get(optInd, optArg, res);
+        INC(optInd);
+        c := ops[i].val;
+      ELSE
+        (* ups, argument missing *)
+        str[1] := ops[i].val;
+        Strings.Extract(str, 0, LEN(str), optArg);
+        c := ":";
+      END;
+    END;
+  END;
+  RETURN c
+END GetShortOpt;
+
+PROCEDURE ExtractOpt(src: ARRAY OF CHAR; VAR dst: ARRAY OF CHAR);
+  VAR i: INTEGER;
+BEGIN
+  i := 0;
+  WHILE (src[i] # 0X) & (src[i] # "=") DO INC(i) END;
+  Strings.Extract(src, 0, i, dst);
+END ExtractOpt;
+
+PROCEDURE GetLongOpt(ops: ARRAY OF TOption): CHAR;
+  VAR c: CHAR; i, p, res: INTEGER;
+BEGIN
+  i := FindLongOpt(arg, ops);
+  IF i < 0 THEN
+    (* not found *)
+    INC(optInd);
+    ExtractOpt(arg, optArg);
+    c := "?";
+  ELSE
+    (* found, go to end of option *)
+    p := 2 + Strings.Length(ops[i].name);
+    IF (arg[p] = 0X) & ~ops[i].hasArg THEN
+      (* no argument needed *)
+      INC(optInd);
+      c := ops[i].val;
+    ELSIF (arg[p] = "=") & ~ops[i].hasArg THEN
+      (* does not need arguments but argument supplied *)
+      INC(optInd);
+      ExtractOpt(arg, optArg);
+      c := ";";
+    ELSIF arg[p] = 0X THEN
+      (* the option argument is the next command line
+         argument *)
+      INC(optInd);
+      IF optInd < Args.count THEN
+        Args.Get(optInd, optArg, res); 
+        INC(optInd);
+        c := ops[i].val;
+      ELSE
+        (* ups, argument missing *)
+        optArg := arg;
+        INC(optInd);
+        c := ":";
+      END;
+    ELSE
+      (* arg[p] = "=" *)
+      Strings.Extract(arg, p + 1, LEN(arg), optArg);
+      INC(optInd);
+      c := ops[i].val;
+    END;
+  END;
+  RETURN c
+END GetLongOpt;
+
+PROCEDURE GetOpt(ops: ARRAY OF TOption): CHAR;
+  VAR c: CHAR;
+BEGIN
+  c := 0X;
+  IF optInd < Args.count THEN
+    Args.Get(optInd, arg, res); 
+    IF (arg[0] = "-") & (arg[1] # 0X) THEN
+      IF arg[1] # "-" THEN
+        (* -xxxxx *)
+        subind := 1;
+        c := GetShortOpt(ops);
+      ELSE
+        (* -- *)
+        IF arg[2] = 0X THEN
+          (* found -- alone *)
+          INC(optInd);
+          (* c := 0X *)
+        ELSE
+          (* long option *)
+          c := GetLongOpt(ops);
+        END;
+      END;
+    END;
+  END;
+  RETURN c
+END GetOpt;
+
+PROCEDURE Next*(ops: ARRAY OF TOption): CHAR;
+  VAR c: CHAR;
+BEGIN
+  IF subind = 0 THEN c := GetOpt(ops)
+  ELSIF arg[subind] # 0X THEN c := GetShortOpt(ops)
+  ELSE subind := 0; INC(optInd); c:= GetOpt(ops) END; 
+  RETURN c
+END Next;
+  
+BEGIN
+  optInd := 0;
+  subind := 0;
+  str := "-X";
+END GetOpt.
