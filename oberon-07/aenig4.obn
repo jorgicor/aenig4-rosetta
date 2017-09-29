@@ -362,10 +362,10 @@ BEGIN
     IF i < cnMachineRotors THEN
       r := FALSE;
     ELSE
-	    (* This checks that we don't use the same rotor type twice.
-	     * It cannot be disabled as the code does not allow for
-	     * rotor duplicates right now...
-	     *)
+      (* This checks that we don't use the same rotor type twice.
+      * It cannot be disabled as the code does not allow for
+      * rotor duplicates right now...
+      *)
       i := 0;
       WHILE r & (i < cnMachineRotors) DO
         j := 0;
@@ -491,7 +491,7 @@ BEGIN
   bad := FALSE;
   Tokenizer.Next(line, p, toksep, tok);
   IF Strings.Length(tok) # cnMachineRotors - 1 THEN
-		bad := TRUE;
+    bad := TRUE;
   END;
 
   IF ~bad THEN
@@ -641,9 +641,9 @@ CONST
   v0 = "> rotors (ex. rotors b Beta I II VIII)";
   v1 = "        Set the machine rotors. Available rotors:";
   v2 = "        b, c, Beta, Gamma, I, II, ... VIII.";
-	v3 = "> rings (ex. rings 1 1 7 26)";
+  v3 = "> rings (ex. rings 1 1 7 26)";
   v4 = "        Set the ring setting for the installed rotors.";
-	v5 = "> bases (ex. bases AAXR)";
+  v5 = "> bases (ex. bases AAXR)";
   v6 = "        Set the rotor positions for the installed rotors.";
   v7 = "> plug (ex. plug AJ PS RT)";
   v8 = "        Plug the given signals on the plugboard.";
@@ -727,7 +727,7 @@ BEGIN
   IF r THEN
     r := RunPlug(key, p);
   END;
-	RETURN r
+  RETURN r
 END SetKey;
 
 PROCEDURE RunLine(line: ARRAY OF CHAR): BOOLEAN;
@@ -811,13 +811,13 @@ BEGIN
   go := TRUE;
   WHILE go & Gets(line) DO
     len := Strings.Length(line);
-		IF (len > 0) & (line[len - 1] # 0AX) THEN
+    IF (len > 0) & (line[len - 1] # 0AX) THEN
       Fmt.Print(Text.out, "Line too long. Nothing done.\n");
       REPEAT
-				In.Char(c);
-			UNTIL ~In.Done OR (c = 0AX);
+        In.Char(c);
+        UNTIL ~In.Done OR (c = 0AX);
     ELSE
-			go := RunLine(line);
+      go := RunLine(line);
     END;
     IF go THEN
       Out.String("> ");
