@@ -8,11 +8,9 @@ Enigma I machine (M1, M2, M3).
 This version of the program is written in the Oberon-07 language as designed by
 Niklaus Wirth, and is a port of the original - and supported - version,
 programmed in C, and all the documentation, configure and install scripts can
-be found at http://jorgicor.sdfeu.org/aenig4 .
+be found at https://jorgicor.niobe.org/aenig4 .
 
 This is free software. See the file `COPYING` for copying conditions.
-
-Copyright (c) 2017 Jorge Giner Cordero
 
 Compiling
 =========

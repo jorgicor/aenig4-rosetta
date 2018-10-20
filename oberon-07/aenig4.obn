@@ -2,7 +2,7 @@
 *)
 
 (*
-Copyright (c) 2017 Jorge Giner Cordero
+Copyright (c) 2018 Jorge Giner Cordero
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -829,13 +829,12 @@ END Loop;
 PROCEDURE Filter(): INTEGER;
   VAR c: CHAR;
 BEGIN
-  REPEAT
-    In.Char(c);
-    IF In.Done THEN
+  In.Char(c);
+  WHILE In.Done DO
       c := EncodeChar(c);
       Out.Char(c);
-    END;
-  UNTIL ~In.Done;
+      In.Char(c);
+  END;
   RETURN 0
 END Filter;
 
@@ -912,36 +911,41 @@ BEGIN
 END ExitFailure;
 
 PROCEDURE HandleOptions(): TProgramAction;
+  CONST acNone = 0; acPrintVersion = 1; acPrintHelp = 2; acExitFailure = 3;
+    acFilter = 4; acEncodeFile = 5; acLoop = 6;
   VAR ops: ARRAY 4 OF GetOpt.TOption;
     c: CHAR; res: INTEGER;
     paction: TProgramAction;
+    action: INTEGER;
 BEGIN
-  paction := NIL;
-  GetOpt.Fill(ops[0], "h", "help", FALSE);
-  GetOpt.Fill(ops[1], "v", "version", FALSE);
-  GetOpt.Fill(ops[2], "k", "key", TRUE);
-  GetOpt.Fill(ops[3], "f", "filter", FALSE);
+  action := acNone;
+
+  GetOpt.Fill(ops[0], "h", "help", FALSE, TRUE);
+  GetOpt.Fill(ops[1], "v", "version", FALSE, TRUE);
+  GetOpt.Fill(ops[2], "k", "key", TRUE, TRUE);
+  GetOpt.Fill(ops[3], "f", "filter", FALSE, TRUE);
+
   REPEAT c := GetOpt.Next(ops);
     CASE c OF
-      "v": paction := PrintVersion;
-    | "h": paction := PrintHelp;
-    | "f": paction := Filter;
-    | "k": IF ~SetKey(GetOpt.optArg) THEN paction := ExitFailure END;
+      "v": action := acPrintVersion;
+    | "h": action := acPrintHelp;
+    | "f": action := acFilter;
+    | "k": IF ~SetKey(GetOpt.optArg) THEN action := acExitFailure END;
     | "?": Fmt.Print(Text.out, "%s: unrecognized option %s\n");
            Fmt.String(PROGRAM); Fmt.String(GetOpt.optArg);
-           paction := ExitFailure;
+           action := acExitFailure;
     | ":": Fmt.Print(Text.out, "%s: %s needs an argument\n");
            Fmt.String(PROGRAM); Fmt.String(GetOpt.optArg);
-           paction := ExitFailure;
+           action := acExitFailure;
     | ";": Fmt.Print(Text.out,
         "%s: %s does not allow for arguments\n");
            Fmt.String(PROGRAM); Fmt.String(GetOpt.optArg);
-           paction := ExitFailure;
+           action := acExitFailure;
     | 0X:
     END
-  UNTIL (c = 0X) OR (paction # NIL);
+  UNTIL (c = 0X) OR (action # acNone);
   
-  IF (paction = NIL) OR (paction = Filter) THEN
+  IF (action = acNone) OR (action = acFilter) THEN
     IF Args.count > GetOpt.optInd THEN
       Args.Get(GetOpt.optInd, srcFileName, res);
     END;  
@@ -954,17 +958,26 @@ BEGIN
   IF (srcFileName[0] # 0X) & (dstFileName[0] = 0X) THEN
     Fmt.Print(Text.err, "%s: unspecified DEST file\n");
     Fmt.String(PROGRAM);
-    paction := ExitFailure;
+    action := acExitFailure;
   ELSIF dstFileName[0] # 0X THEN
-    IF paction = Filter THEN
+    IF action = acFilter THEN
       Fmt.Print(Text.err, "%s: warning: --filter option ignored\n");
       Fmt.String(PROGRAM);
     END;
-    paction := EncodeFile;
+    action := acEncodeFile;
   END;
 
-  IF paction = NIL THEN
-    paction := Loop
+  IF action = acNone THEN
+    action := acLoop
+  END;
+
+  CASE action OF
+    acPrintVersion: paction := PrintVersion;
+  | acPrintHelp: paction := PrintHelp;
+  | acExitFailure: paction := ExitFailure;
+  | acFilter: paction := Filter;
+  | acEncodeFile: paction := EncodeFile;
+  | acLoop: paction := Loop;
   END;
 
   RETURN paction

@@ -2,7 +2,7 @@
  *)
 
 (*
-Copyright (c) 2017 Jorge Giner Cordero
+Copyright (c) 2018 Jorge Giner Cordero
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -37,7 +37,8 @@ TYPE
   TOption* = RECORD
     name: ARRAY cMaxOptLen OF CHAR;
     hasArg: BOOLEAN;
-    val: CHAR
+    val: CHAR;
+    valid: BOOLEAN
   END;
 
   TArg = ARRAY cMaxArgLen OF CHAR;
@@ -50,42 +51,47 @@ VAR
   str: ARRAY 3 OF CHAR;
 
 PROCEDURE Fill*(VAR op: TOption; val: CHAR; name: ARRAY OF CHAR;
-    hasArg: BOOLEAN);
+    hasArg, valid: BOOLEAN);
 BEGIN
   op.val := val;
   op.name := name;
   op.hasArg := hasArg;
+  op.valid := valid;
 END Fill;
 
 PROCEDURE FindShortOpt(val: CHAR; ops: ARRAY OF TOption): INTEGER;
   VAR i: INTEGER;
 BEGIN
   i := 0;
-  WHILE (i < LEN(ops)) & (ops[i].name[0] # 0X) & (ops[i].val # val) DO
+  WHILE (i < LEN(ops)) & ~(ops[i].valid & (ops[i].val = val)) DO
     INC(i);
   END;
-  IF (i = LEN(ops)) OR (ops[i].val # val) THEN i := -1 END;
+  IF i >= LEN(ops) THEN i := -1 END;
   RETURN i
 END FindShortOpt;
 
+(* arg must be "--X" where X is a sequence of at least one character *)
 PROCEDURE FindLongOpt(arg: ARRAY OF CHAR; ops: ARRAY OF TOption): INTEGER;
-  VAR i, p, q: INTEGER;
-    found: BOOLEAN;
+  VAR i, p, q, k: INTEGER;
 BEGIN
-  i := 0;
-  found := FALSE;
-  WHILE ~found & (i < LEN(ops)) & (ops[i].name[0] # 0X) DO
-    p := 0;
-    q := 2;
-    WHILE (ops[i].name[p] # 0X) & (ops[i].name[p] = arg[q]) DO
-      INC(p); INC(q);
-    END;
-    IF (ops[i].name[p] = 0X) & ((arg[q] = 0X) OR (arg[q] = "="))
-    THEN found := TRUE;
-    ELSE INC(i) END;
+  k := -1; i := 0;
+  (*
+  WHILE i < LEN(ops) & ~(ops[i].valid & (ops[i].name[0] # 0X)) OR ~F DO
+    INC(i);
   END;
-  IF ~found THEN i := -1 END
-  RETURN i
+  *)
+  WHILE i < LEN(ops) DO
+    IF ops[i].valid & (ops[i].name[0] # 0X) THEN
+      p := 0; q := 2;
+      WHILE (ops[i].name[p] # 0X) & (ops[i].name[p] = arg[q]) DO
+        INC(p); INC(q);
+      END;
+      IF (ops[i].name[p] = 0X) & ((arg[q] = 0X) OR (arg[q] = "=")) THEN
+        k := i; i := LEN(ops);
+      ELSE INC(i); END;
+    ELSE INC(i); END;
+  END;
+  RETURN k
 END FindLongOpt;
 
 PROCEDURE GetShortOpt(ops: ARRAY OF TOption): CHAR;
@@ -137,6 +143,7 @@ BEGIN
   Strings.Extract(src, 0, i, dst);
 END ExtractOpt;
 
+(* GetOpt.arg must be "--X" where X is a sequence of at least one character *)
 PROCEDURE GetLongOpt(ops: ARRAY OF TOption): CHAR;
   VAR c: CHAR; i, p, res: INTEGER;
 BEGIN
