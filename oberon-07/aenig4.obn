@@ -815,7 +815,7 @@ BEGIN
       Fmt.Print(Text.out, "Line too long. Nothing done.\n");
       REPEAT
         In.Char(c);
-        UNTIL ~In.Done OR (c = 0AX);
+      UNTIL ~In.Done OR (c = 0AX);
     ELSE
       go := RunLine(line);
     END;
@@ -885,7 +885,7 @@ CONST
   v8 = "                      -k \'c Gamma V IV I 1 26 2 3 RTJZ BT RJ\'.";
   v9 = "  -v, --version       Output version information and exit.";
   v10 = "Report bugs to: <jorge.giner@hotmail.com>.";
-  v11 = "Home page: <http://jorgicor.sdfeu.org/aenig4>.";
+  v11 = "Home page: <https://jorgicor.niobe.org/aenig4>.";
 BEGIN
   Out.String(v0); Out.Ln;
   Out.Ln;
