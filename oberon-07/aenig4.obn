@@ -2,7 +2,7 @@
 *)
 
 (*
-Copyright (c) 2018 Jorge Giner Cordero
+Copyright (c) 2019 Jorge Giner Cordero
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -26,7 +26,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 MODULE aenig4;
 
-IMPORT In, Out, Files, Args := stdArgs, Strings,
+IMPORT In, Out, Files, Args := extArgs, Strings,
   GetOpt, Text, Fmt, Tokenizer;
 
 CONST
@@ -771,8 +771,8 @@ END RunLine;
 
 PROCEDURE PrintVersion(): INTEGER;
 CONST
-  v0 = "aenig4 version 1.0 (Oberon-07)";
-  v1 = "Copyright (C) 2017 Jorge Giner Cordero.";
+  v0 = "aenig4 version 1.0.1 (Oberon-07)";
+  v1 = "Copyright (C) 2019 Jorge Giner Cordero.";
   v2 = "This is free software: you are free to change and redistribute it.";
   v3 = "There is NO WARRANTY, to the extent permitted by law.";
 BEGIN

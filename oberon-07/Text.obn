@@ -2,7 +2,7 @@
  *)
 
 (*
-Copyright (c) 2017 Jorge Giner Cordero
+Copyright (c) 2019 Jorge Giner Cordero
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -26,7 +26,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 MODULE Text;
 
-IMPORT Out, stdErr, Files, stdConvert;
+IMPORT Out, Err := extErr, Files, Convert := extConvert;
 
 TYPE
 
@@ -97,7 +97,7 @@ PROCEDURE FileInt(w: Writer; i, n: INTEGER);
   VAR ibuf: ARRAY 21 OF CHAR;
     done: BOOLEAN;
 BEGIN
-  stdConvert.IntToString(i, ibuf, done);
+  Convert.IntToString(i, ibuf, done);
   FileString(w, ibuf);
 END FileInt;
 
@@ -105,7 +105,7 @@ PROCEDURE FileReal(w: Writer; r: REAL; n: INTEGER);
   VAR rbuf: ARRAY 64 OF CHAR;
     done: BOOLEAN;
 BEGIN
-  stdConvert.RealToString(r, rbuf, done);
+  Convert.RealToString(r, rbuf, done);
   FileString(w, rbuf);
 END FileReal;
 
@@ -150,27 +150,27 @@ END OutLn;
 
 PROCEDURE ErrString(w:Writer; s: ARRAY OF CHAR);
 BEGIN
-  stdErr.String(s);
+  Err.String(s);
 END ErrString;
 
 PROCEDURE ErrChar(w:Writer; c: CHAR);
 BEGIN
-  stdErr.Char(c);
+  Err.Char(c);
 END ErrChar;
 
 PROCEDURE ErrInt(w:Writer; i, n: INTEGER);
 BEGIN
-  stdErr.Int(i, n);
+  Err.Int(i, n);
 END ErrInt;
 
 PROCEDURE ErrReal(w:Writer; r: REAL; n: INTEGER);
 BEGIN
-  stdErr.Real(r, n);
+  Err.Real(r, n);
 END ErrReal;
 
 PROCEDURE ErrLn(w:Writer);
 BEGIN
-  stdErr.Ln;
+  Err.Ln;
 END ErrLn;
 
 BEGIN
